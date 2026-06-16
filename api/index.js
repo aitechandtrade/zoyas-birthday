@@ -1,29 +1,39 @@
-import handler from '../dist/server/server.js';
+let handler;
 
 export default async (req, res) => {
   try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+    // Dynamically import the server on first request
+    if (!handler) {
+      const mod = await import('../dist/server/server.js');
+      handler = mod.default || mod;
+    }
+
+    // Build the full URL
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const url = new URL(req.url, `${protocol}://${host}`);
+
+    // Create a Request object
     const request = new Request(url, {
       method: req.method,
       headers: req.headers,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req,
     });
 
-    const response = await handler.default.fetch(request);
-    
+    // Call the handler
+    const response = await handler.fetch(request);
+
+    // Send response
     res.statusCode = response.status;
-    for (const [key, value] of response.headers) {
+    response.headers.forEach((value, key) => {
       res.setHeader(key, value);
-    }
-    
-    if (response.body) {
-      res.end(await response.text());
-    } else {
-      res.end();
-    }
+    });
+
+    res.end(await response.text());
   } catch (error) {
-    console.error(error);
+    console.error('Server error:', error);
     res.statusCode = 500;
-    res.end('Internal Server Error');
+    res.setHeader('content-type', 'text/plain');
+    res.end('Internal Server Error: ' + (error.message || 'Unknown error'));
   }
 };
